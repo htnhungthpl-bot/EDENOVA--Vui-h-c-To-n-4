@@ -1,0 +1,6 @@
+{
+  "name": "EDUNOVA - Nền tảng Giáo dục Thông minh (Vui học Toán 4)",
+  "description": "EDUNOVA ứng dụng trí tuệ nhân tạo kết nối giáo viên, học sinh và nhà trường; cá nhân hóa học tập và phát triển năng lực Vui học Toán 4.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

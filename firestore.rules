@@ -1,0 +1,200 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =========================================================================
+    // HÀM BỔ TRỢ PHÂN QUYỀN RBAC & TENANT ISOLATION
+    // =========================================================================
+
+    // 1. Kiểm tra người dùng đã xác thực
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // 2. Lấy vai trò từ custom claims
+    function getRole() {
+      return request.auth.token.role;
+    }
+
+    // 3. Lấy schoolId được gán cho tài khoản từ custom claims
+    function getSchoolId() {
+      return request.auth.token.schoolId;
+    }
+
+    // 4. Kiểm tra có phải Super Admin toàn nền tảng
+    function isSuperAdmin() {
+      return isAuthenticated() && getRole() == 'SUPER_ADMIN';
+    }
+
+    // 5. Kiểm tra có phải Quản trị viên của đúng trường học (Tenant Isolation)
+    function isSchoolAdmin(targetSchoolId) {
+      return isAuthenticated() && (
+        isSuperAdmin() ||
+        (getRole() == 'SCHOOL_ADMIN' && getSchoolId() == targetSchoolId)
+      );
+    }
+
+    // 6. Kiểm tra quyền Giáo viên trong trường
+    function isTeacher(targetSchoolId) {
+      return isAuthenticated() && (
+        isSuperAdmin() ||
+        (getRole() == 'TEACHER' && getSchoolId() == targetSchoolId)
+      );
+    }
+
+    // 7. Kiểm tra có phải chính chủ tài khoản
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // 8. Kiểm tra quyền Thẩm định viên học liệu
+    function isContentReviewer() {
+      return isAuthenticated() && (getRole() == 'CONTENT_REVIEWER' || isSuperAdmin());
+    }
+
+    // =========================================================================
+    // QUY TẮC CHO TỪNG BỘ DỮ LIỆU
+    // =========================================================================
+
+    // 1. Schools: Danh mục trường học
+    // Giải thích: Mọi người dùng đã đăng nhập được xem danh sách trường; chỉ Super Admin mới được tạo hoặc khóa trường.
+    match /schools/{schoolId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isSuperAdmin();
+    }
+
+    // 2. Users & UserProfiles: Tài khoản và hồ sơ
+    // Giải thích: Người dùng chỉ được sửa hồ sơ của mình; School Admin quản lý user trong trường; Super Admin toàn quyền.
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (isOwner(userId) || isSuperAdmin() || (getRole() == 'SCHOOL_ADMIN' && resource.data.schoolId == getSchoolId()));
+      allow write: if isSuperAdmin() || (getRole() == 'SCHOOL_ADMIN' && request.resource.data.schoolId == getSchoolId());
+    }
+
+    match /userProfiles/{profileId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (isOwner(resource.data.userId) || isSuperAdmin() || (getRole() == 'SCHOOL_ADMIN' && resource.data.schoolId == getSchoolId()));
+    }
+
+    // 3. Classes: Lớp học
+    // Giải thích: Thành viên trong trường được xem lớp; chỉ School Admin hoặc Super Admin mới được tạo/sửa lớp.
+    match /classes/{classId} {
+      allow read: if isAuthenticated() && (resource.data.schoolId == getSchoolId() || isSuperAdmin());
+      allow write: if isSchoolAdmin(request.resource.data.schoolId);
+    }
+
+    // 4. ClassMemberships: Phân công giáo viên và ghi danh học sinh
+    // Giải thích: Thành viên xem được danh sách lớp mình; School Admin quản lý việc phân công.
+    match /classMemberships/{membershipId} {
+      allow read: if isAuthenticated() && (resource.data.schoolId == getSchoolId() || isSuperAdmin());
+      allow write: if isSchoolAdmin(request.resource.data.schoolId);
+    }
+
+    // 5. Subjects, Curricula, Lessons, LearningMaterials: Chương trình học & Học liệu
+    // Giải thích: Mọi người dùng được xem học liệu công khai; chỉ Content Reviewer hoặc Super Admin mới được cập nhật.
+    match /subjects/{subjectId} {
+      allow read: if true;
+      allow write: if isContentReviewer();
+    }
+    match /curricula/{curriculumId} {
+      allow read: if true;
+      allow write: if isContentReviewer();
+    }
+    match /lessons/{lessonId} {
+      allow read: if true;
+      allow write: if isContentReviewer();
+    }
+    match /learningMaterials/{materialId} {
+      allow read: if true;
+      allow write: if isContentReviewer();
+    }
+
+    // 6. Assignments: Bài tập được giao
+    // Giải thích: Giáo viên tạo bài tập cho lớp mình; học sinh trong lớp được đọc bài tập.
+    match /assignments/{assignmentId} {
+      allow read: if isAuthenticated() && (resource.data.schoolId == getSchoolId() || isSuperAdmin());
+      allow write: if isAuthenticated() && (isTeacher(request.resource.data.schoolId) || isSuperAdmin());
+    }
+
+    // 7. Questions: Đề câu hỏi (Dành cho học sinh làm bài)
+    // Giải thích: Học sinh và giáo viên đều được đọc đề bài để làm hoặc giao bài tập.
+    match /questions/{questionId} {
+      allow read: if isAuthenticated();
+      allow write: if isContentReviewer() || isTeacher(request.resource.data.schoolId);
+    }
+
+    // 8. AnswerKeys: BẢNG ĐÁP ÁN CHUẨN (BẢO VỆ TỐI MẬT)
+    // Giải thích: TUYỆT ĐỐI KHÔNG CHO HỌC SINH ĐỌC. Chỉ Giáo viên, Thẩm định viên hoặc Super Admin mới được đọc đáp án.
+    match /answerKeys/{answerKeyId} {
+      allow read: if isAuthenticated() && (getRole() == 'TEACHER' || getRole() == 'CONTENT_REVIEWER' || isSuperAdmin());
+      allow write: if isContentReviewer() || isSuperAdmin();
+    }
+
+    // 9. Submissions & SubmissionAnswers: Bài nộp của học sinh
+    // Giải thích: Học sinh chỉ tạo và đọc bài nộp của chính mình; Giáo viên phụ trách được chấm điểm.
+    match /submissions/{submissionId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.studentId) || isTeacher(resource.data.schoolId) || isSuperAdmin());
+      allow create: if isAuthenticated() && request.resource.data.studentId == request.auth.uid;
+      allow update: if isAuthenticated() && (isOwner(resource.data.studentId) || isTeacher(resource.data.schoolId) || isSuperAdmin());
+    }
+
+    match /submissionAnswers/{answerId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (isTeacher(resource.data.schoolId) || isSuperAdmin());
+    }
+
+    // 10. LearningProgress: Báo cáo tiến độ cá nhân
+    // Giải thích: Học sinh chỉ xem tiến độ của mình; Giáo viên và Quản trị trường xem tiến độ học sinh trong trường.
+    match /learningProgress/{progressId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.studentId) || resource.data.schoolId == getSchoolId() || isSuperAdmin());
+      allow write: if isTeacher(request.resource.data.schoolId) || isSuperAdmin();
+    }
+
+    // 11. AIInteractions: Nhật ký tương tác sư phạm AI
+    // Giải thích: Bảo vệ riêng tư của trẻ em; học sinh chỉ đọc hội thoại của chính mình.
+    match /aiInteractions/{interactionId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.studentId) || isSuperAdmin());
+      allow create: if isAuthenticated() && request.resource.data.studentId == request.auth.uid;
+      allow update, delete: if isSuperAdmin();
+    }
+
+    // 12. TeacherFeedback: Nhận xét sư phạm
+    // Giải thích: Giáo viên tạo nhận xét; học sinh nhận xét xem được phản hồi cho bài của mình.
+    match /teacherFeedback/{feedbackId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.studentId) || isTeacher(resource.data.schoolId) || isSuperAdmin());
+      allow write: if isTeacher(request.resource.data.schoolId) || isSuperAdmin();
+    }
+
+    // 13. Achievements: Huy hiệu nỗ lực học tập
+    // Giải thích: Học sinh xem được huy hiệu của mình; chỉ máy chủ/giáo viên cấp huy hiệu.
+    match /achievements/{achievementId} {
+      allow read: if isAuthenticated();
+      allow write: if isTeacher(getSchoolId()) || isSuperAdmin();
+    }
+
+    // 14. Notifications: Thông báo người dùng
+    // Giải thích: Chỉ người nhận (recipientId) mới đọc được thông báo của mình.
+    match /notifications/{notifId} {
+      allow read: if isAuthenticated() && isOwner(resource.data.recipientId);
+      allow write: if isAuthenticated();
+    }
+
+    // 15. AuditLogs: Nhật ký kiểm toán an ninh
+    // Giải thích: Không ai được sửa/xóa AuditLogs; Super Admin xem toàn bộ; School Admin chỉ xem log trường mình.
+    match /auditLogs/{logId} {
+      allow read: if isSuperAdmin() || (getRole() == 'SCHOOL_ADMIN' && resource.data.schoolId == getSchoolId());
+      allow create: if isAuthenticated();
+      allow update, delete: if false; // Bất biến, không thể sửa đổi
+    }
+
+    // 16. AIUsageRecords & AppSettings
+    // Giải thích: Chỉ Super Admin mới xem và quản lý cấu hình hệ thống và chi phí mô hình AI.
+    match /aiUsageRecords/{recordId} {
+      allow read, write: if isSuperAdmin();
+    }
+    match /appSettings/{settingKey} {
+      allow read: if isAuthenticated();
+      allow write: if isSuperAdmin();
+    }
+  }
+}

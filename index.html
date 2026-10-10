@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <script>
+      // Compatibility shim for browser extensions and request interceptors
+      // preventing "Cannot set property fetch of #<Window> which has only a getter"
+      (function() {
+        try {
+          var _fetch = window.fetch ? window.fetch.bind(window) : undefined;
+          Object.defineProperty(window, 'fetch', {
+            get: function() {
+              return _fetch;
+            },
+            set: function(fn) {
+              _fetch = fn;
+            },
+            configurable: true,
+            enumerable: true
+          });
+        } catch (err) {
+          console.warn('Fetch setter initialization:', err);
+        }
+      })();
+    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EDUNOVA - Nền tảng Giáo dục Thông minh | Vui học Toán 4</title>
+    <meta name="description" content="EDUNOVA ứng dụng trí tuệ nhân tạo kết nối giáo viên, học sinh và nhà trường; cá nhân hóa học tập và phát triển năng lực Vui học Toán 4." />
+    <meta property="og:title" content="EDUNOVA - Nền tảng Giáo dục Thông minh | Vui học Toán 4" />
+    <meta property="og:description" content="EDUNOVA ứng dụng trí tuệ nhân tạo kết nối giáo viên, học sinh và nhà trường; cá nhân hóa học tập và phát triển năng lực Vui học Toán 4." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
